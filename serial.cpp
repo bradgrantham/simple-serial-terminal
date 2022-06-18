@@ -1,6 +1,7 @@
 // On Windows under cygwin, try /dev/comNN, where NN is 0, 1, 2, etc
 // GUC-232A came up as /dev/com4 just now (I think)
 
+// GCC and CLANG: g++ -std=c++11 -Wall -Wpedantic -Wextra serial.cpp -o serial
 
 #include <stdio.h>   /* Standard input/output definitions */
 #include <string.h>  /* String function definitions */
@@ -12,6 +13,7 @@
 #include <sys/types.h>
 #include <sys/time.h>
 
+// This is needed with --std=c++11.  I haven't investigated further.
 #if defined(__CYGWIN__)
 #include <sys/select.h>
 #endif
