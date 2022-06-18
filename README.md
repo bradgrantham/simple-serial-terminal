@@ -58,3 +58,10 @@ Joost Bruynooghe pointed out that I was missing an argument in a printf
 on line 143, and that could conceivably have lead to junk output or
 possibly a crash.  The code was **not** compiling without warnings.
 I have updated the source code with his fix.  Thanks, Joost!
+
+*June 18th, 2022*
+
+Chris Browning mentioned `serial` in a
+[StackOverflow post](https://stackoverflow.com/a/43925904)
+many years ago.  He posted his version with a bug fix at
+https://github.com/lime45/serial .
