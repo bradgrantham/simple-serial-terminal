@@ -70,28 +70,45 @@ int baudMappingCount = sizeof(baudMapping) / sizeof(baudMapping[0]);
 char presetNames[10][512];
 char presetStrings[10][16384]; // should probably use std::string
 
+const char* usageString = R"
+serial v1.0 by Brad Grantham, grantham@plunk.org
+
+usage: %s serialportfile baud
+e.g.: %s /dev/ttyS0 38400
+
+The file $HOME/.serial (%s/.serial in your specific case) can also
+contain 10 string presets which are emitted when pressing \"~\" (tilde)
+followed by one of the keys \"1\" through \"0\".
+This file contains one preset per line, of the format:
+
+    name-of-preset preset-string-here
+
+The preset string itself can contain spaces and also can contain embedded
+newlines in the form \"\\n\".  Here's a short example file:
+
+    restart-device reboot\\n
+    initiate-connection telnet distant-machine\\nexport DISPLAY=flebbenge:0\\n
+
+Pressing \"~\" then 1 will send \"reboot\" and a newline over the serial port.
+Pressing \"~\" then 2 will send \"telnet distant-machine\" over the serial
+port, then a newline, then \"export DISPLAY=flebbenge:0\", and then
+another newline.
+
+When running, press \"~\" (tilde) and then \"h\" for some help.
+";
+
 void usage(char *progname)
 {
-    fprintf(stderr, "\n");
-    fprintf(stderr, "serial v1.0 by Brad Grantham, grantham@plunk.org\n\n");
-    fprintf(stderr, "usage: %s serialportfile baud\n", progname);
-    fprintf(stderr, "e.g.: %s /dev/ttyS0 38400\n", progname);
-    fprintf(stderr, "\n\nThe file $HOME/.serial (%s/.serial in your specific case) can also\n", getenv("HOME"));
-    fprintf(stderr, "contain 10 string presets which are emitted when pressing \"~\" (tilde)\n");
-    fprintf(stderr, "followed by one of the keys \"1\" through \"0\".\n");
-    fprintf(stderr, "This file contains one preset per line, of the format:\n");
-    fprintf(stderr, "\n    name-of-preset preset-string-here\n");
-    fprintf(stderr, "\nThe preset string itself can contain spaces and also can contain embedded\n");
-    fprintf(stderr, "newlines in the form \"\\n\".  Here's a short example file:\n");
-    fprintf(stderr, "\n    restart-device reboot\\n\n");
-    fprintf(stderr, "    initiate-connection telnet distant-machine\\nexport DISPLAY=flebbenge:0\\n\n");
-    fprintf(stderr, "\nPressing \"~\" then 1 will send \"reboot\" and a newline over the serial port.\n");
-    fprintf(stderr, "Pressing \"~\" then 2 will send \"telnet distant-machine\" over the serial\n");
-    fprintf(stderr, "port, then a newline, then \"export DISPLAY=flebbenge:0\", and then\n");
-    fprintf(stderr, "another newline.\n");
-    fprintf(stderr, "When running, press \"~\" (tilde) and then \"h\" for some help.\n");
-    fprintf(stderr, "\n");
+    printf(usageString, getenv("HOME"));
 }
+
+const char* keyHelpString = R"
+key help:
+    .   - exit
+    d   - toggle duplex
+    n   - toggle whether to send CR with NL
+    0-9 - send preset strings from ~/.serial
+";
 
 int main(int argc, char **argv)
 {
@@ -113,8 +130,7 @@ int main(int argc, char **argv)
 
     while((argc > 0) && (argv[0][0] == '-')) {
         if(strcmp(argv[0], "--help") == 0) {
-            argc--;
-            argv++;
+            argc--; argv++;
             usage(programName);
             exit(EXIT_SUCCESS);
         } else {
@@ -384,11 +400,8 @@ int main(int argc, char **argv)
 
                     if(saw_tilde) {
                         if(buf[0] == 'h' || buf[0] == '?') {
-                            printf("key help:\n");
-                            printf("    .   - exit\n");
-                            printf("    d   - toggle duplex\n");
-                            printf("    n   - toggle whether to send CR with NL\n");
-                            printf("    0-9 - send preset strings from ~/.serial\n");
+
+                            printf("%s", keyHelpString);
                             int i;
                             for(i = 0; i < 10; i++) {
                                 int which = (i + 1) % 10;
@@ -396,18 +409,22 @@ int main(int argc, char **argv)
                                     break;
                                 printf("        %d : \"%s\"\n", which, presetNames[which]);
                             }
-                            if(i == 0)
+                            if(i == 0) {
                                 printf("        (no preset strings)\n");
+                            }
                             printf("    p   - print contents of presets\n");
                             saw_tilde = false;
                             continue;
+
                         } else if(buf[0] >= '0' && buf[0] <= '9') {
+                            
                             int which = buf[0] - '0';
                             write(serial, presetStrings[which], strlen(presetStrings[which]));
                             saw_tilde = false;
                             continue;
 
                         } else if(buf[0] == 'p') {
+
                             printf("preset strings from ~/.serial:\n");
                             int i;
                             for(i = 0; i < 10; i++) {
@@ -420,14 +437,19 @@ int main(int argc, char **argv)
                                 printf("  (no preset strings)\n");
                             saw_tilde = false;
                             continue;
+
                         } else if(buf[0] == '.') {
+
                             done = true;
                             saw_tilde = false;
                             continue;
+
                         } else if(buf[0] == 'd') {
+
                             duplex = !duplex;
                             saw_tilde = false;
                             continue;
+
                         } else if(buf[0] == 'n') {
 
                             crnl = !crnl;
@@ -442,13 +464,15 @@ int main(int argc, char **argv)
 #endif
 
                             tcgetattr(tty_out, &options);
-                            if(crnl)
+                            if(crnl) {
                                 options.c_oflag |= OCRNL;
-                            else
+                            } else {
                                 options.c_oflag &= ~OCRNL;
+                            }
                             tcsetattr(tty_out, TCSANOW, &options);
-                            continue;
                             saw_tilde = false;
+
+                            continue;
                         }
 
                     } else if(buf[0] == '~') {
