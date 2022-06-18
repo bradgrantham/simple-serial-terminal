@@ -12,6 +12,11 @@
 #include <sys/types.h>
 #include <sys/time.h>
 
+#if defined(__CYGWIN__)
+#include <sys/select.h>
+#endif
+
+
 unsigned char buf[512];
 
 unsigned baudMapping[][2] = {
@@ -70,7 +75,7 @@ int baudMappingCount = sizeof(baudMapping) / sizeof(baudMapping[0]);
 char presetNames[10][512];
 char presetStrings[10][16384]; // should probably use std::string
 
-const char* usageString = R"
+const char* usageString = R"(
 serial v1.0 by Brad Grantham, grantham@plunk.org
 
 usage: %s serialportfile baud
@@ -95,20 +100,21 @@ port, then a newline, then \"export DISPLAY=flebbenge:0\", and then
 another newline.
 
 When running, press \"~\" (tilde) and then \"h\" for some help.
-";
+)";
 
 void usage(char *progname)
 {
-    printf(usageString, getenv("HOME"));
+    printf(usageString, progname, progname, getenv("HOME"));
 }
 
-const char* keyHelpString = R"
+const char* keyHelpString = R"(
 key help:
     .   - exit
     d   - toggle duplex
     n   - toggle whether to send CR with NL
     0-9 - send preset strings from ~/.serial
-";
+    p   - print contents of presets
+)";
 
 int main(int argc, char **argv)
 {
@@ -121,7 +127,7 @@ int main(int argc, char **argv)
     unsigned int    baud;
     char            stringbuf[16384];
     bool	    done = false;
-    fd_set	    reads;
+    fd_set   reads;
     struct timeval  timeout;
 
     char *programName = argv[0];
@@ -412,7 +418,6 @@ int main(int argc, char **argv)
                             if(i == 0) {
                                 printf("        (no preset strings)\n");
                             }
-                            printf("    p   - print contents of presets\n");
                             saw_tilde = false;
                             continue;
 
