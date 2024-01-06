@@ -91,12 +91,12 @@ need to be run in the Windows PowerShell (probably with administrative level).
 Hopefully, your serial port adapter is in the list. Lets assume that I want to make Id "5-3"
 available to Ubuntu.
 
-3) Make the port shareable:
+2) Make the port shareable:
 ```
  C:\> uspipd bind -b 5-3
 ```
 
-4) Actually share that port:
+3) Actually share that port:
 ```
  C:\> uspipd attach --wsl --busid 5-3
 ```
