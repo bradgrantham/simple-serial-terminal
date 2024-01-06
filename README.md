@@ -86,19 +86,19 @@ need to be run in the Windows PowerShell (probably with administrative level).
 
 1) See what ports Windows has available:
 ```
- C:\> uspipd list
+ C:\> usbipd list
 ```
 Hopefully, your serial port adapter is in the list. Lets assume that I want to make Id "5-3"
 available to Ubuntu.
 
 2) Make the port shareable:
 ```
- C:\> uspipd bind -b 5-3
+ C:\> usbipd bind -b 5-3
 ```
 
 3) Actually share that port:
 ```
- C:\> uspipd attach --wsl --busid 5-3
+ C:\> usbipd attach --wsl --busid 5-3
 ```
 
 Now, in the Ubuntu terminal in WSL look for /dev/ttyUSB0 . That should have appeared.
