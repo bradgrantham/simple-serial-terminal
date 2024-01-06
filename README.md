@@ -81,15 +81,21 @@ Remember, that needs to be installed on the native Windows side. And, these setu
 need to be run in the Windows PowerShell (probably with administrative level).
 
 1) See what ports Windows has available:
- > uspipd list
+'''
+ C:\> uspipd list
+'''
 Hopefully, your serial port adapter is in the list. Lets assume that I want to make Id "5-3"
 available to Ubuntu.
 
 2) Make the port shareable:
- > uspipd bind -b 5-3
+'''
+ C:\> uspipd bind -b 5-3
+'''
 
 3) Actually share that port:
- > uspipd attach --wsl --busid 5-3
+'''
+ C:\> uspipd attach --wsl --busid 5-3
+'''
 
 Now, in the Ubuntu terminal in WSL look for /dev/ttyUSB0 . That should have appeared.
 And, that can be used as the port to use in this simple-serial-terminal.
