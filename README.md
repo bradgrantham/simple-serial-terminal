@@ -72,11 +72,15 @@ Nick Thomas (nethomas1968@gmail.com) tested this in a WSL2 setup.
 Windows Subsystem for Linux (WSL) is quite popular. If you've got a 
 Windows (10 or 11) endpoint but want some CLI Linux tools at your disposal
 then it's quite a good choice.
+
 This simple-serial-terminal CLI tool works without modification, but you will
 need to install a Windows side tool which allows Ubuntu side to access the serial ports
 which are maintained by the Windows side.
+
 The tool is called usbipd-win. It can be installed by following the instructions
-at https://github.com/dorssel/usbipd-win   . I used version 4.0.0. 
+at https://github.com/dorssel/usbipd-win  .
+I used version 4.0.0. 
+
 Remember, that needs to be installed on the native Windows side. And, these setup instructions
 need to be run in the Windows PowerShell (probably with administrative level).
 
