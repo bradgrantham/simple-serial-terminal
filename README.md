@@ -65,3 +65,41 @@ Chris Browning mentioned `serial` in a
 [StackOverflow post](https://stackoverflow.com/a/43925904)
 many years ago.  He posted his version with a bug fix at
 https://github.com/lime45/serial .
+
+*January 6th, 2024*
+
+Nick Thomas (nethomas1968@gmail.com) tested this in a WSL2 setup.
+Windows Subsystem for Linux (WSL) is quite popular. If you've got a 
+Windows (10 or 11) endpoint but want some CLI Linux tools at your disposal
+then it's quite a good choice.
+
+This simple-serial-terminal CLI tool works without modification, but you will
+need to install a Windows side tool which allows Ubuntu side to access the serial ports
+which are maintained by the Windows side.
+
+The tool is called usbipd-win. It can be installed by following the instructions
+at https://github.com/dorssel/usbipd-win  .
+I used version 4.0.0. 
+
+Remember, that needs to be installed on the native Windows side. And, these setup instructions
+need to be run in the Windows PowerShell (probably with administrative level).
+
+1) See what ports Windows has available:
+```
+ C:\> usbipd list
+```
+Hopefully, your serial port adapter is in the list. Lets assume that I want to make Id "5-3"
+available to Ubuntu.
+
+2) Make the port shareable:
+```
+ C:\> usbipd bind -b 5-3
+```
+
+3) Actually share that port:
+```
+ C:\> usbipd attach --wsl --busid 5-3
+```
+
+Now, in the Ubuntu terminal in WSL look for /dev/ttyUSB0 . That should have appeared.
+And, that can be used as the port to use in this simple-serial-terminal.
