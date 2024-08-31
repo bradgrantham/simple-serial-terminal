@@ -17,7 +17,7 @@ Use cases include:
 * `serial` contains **very** rudimentary support for macros to aid repeatedly issuing very similar, very arcane bootloader commands.
 * GRUB has the ability to use a serial port as its terminal and `serial` from another machine can allow a user to drive GRUB
 
-Build it on Linux, MacOS,and Cygwin using e.g. from bash or zsh using:
+Build it on Linux, MacOS,and Cygwin e.g. from bash or zsh using:
 ```
     CFLAGS="--std=c++11 -Wall" make serial
 ```
