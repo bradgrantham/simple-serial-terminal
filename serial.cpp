@@ -156,7 +156,7 @@ int main(int argc, char **argv)
     for(int i = 0; i < 10; i++)
         presetStrings[i][0] = '\0';
 
-    sprintf(presetName, "%s/.serial", getenv("HOME"));
+    snprintf(presetName, sizeof(presetName), "%s/.serial", getenv("HOME"));
     presetFile = fopen(presetName, "r");
 
     if(presetFile == NULL) {
@@ -389,6 +389,21 @@ int main(int argc, char **argv)
 		if(false) printf("Read from serial\n");
 
 		int byte_count = read(serial, buf, sizeof(buf));
+
+                if(byte_count == -1) 
+                {
+                    if(errno == ENXIO) 
+                    {
+                        fprintf(stderr, "The device became unavailble.\n");
+                        fprintf(stderr, "Maybe it was a USB adapter that was unplugged?\n");
+                    }
+                    else
+                    {
+                        fprintf(stderr, "unexpected return of -1 bytes from read: errno = %d\n", errno);
+                    }
+		    done = true;
+		    continue;
+                }
 
 		if(byte_count == 0) {
 		    fprintf(stderr, "unexpected read of 0 bytes from serial!\n");
