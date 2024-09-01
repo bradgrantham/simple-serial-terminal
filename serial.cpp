@@ -328,10 +328,8 @@ int main(int argc, char **argv)
      */
     options.c_cflag |= (CLOCAL | CREAD);	/* Enable receiver, set
 						 * local */
-    /*
-     * Linux seems to have problem with the following ??!! 
-     */
-    options.c_cflag |= (IXON | IXOFF);	/* Software flow control */
+
+    options.c_iflag |= (IXON | IXOFF);	/* Software flow control */
     options.c_lflag = 0;	/* no local flags */
     options.c_cflag |= HUPCL;	/* Drop DTR on close */
 
