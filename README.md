@@ -1,5 +1,5 @@
 This tool opens
-a device at a particular baud rate, hooks the terminal to the serial
+a device at a particular baud rate a "8,N,1", hooks the terminal to the serial
 port, and gets out of the way.  Run it something like the following,
 then press tilde (`~`) then period to exit.
 
@@ -7,11 +7,10 @@ then press tilde (`~`) then period to exit.
 serial /dev/tty01 19200
 ```
 
-I used to use `minicom` from Linux as a serial port terminal, but I found
-I didn't like `minicom` taking over the terminal.  So I found at the time
-I was using this junky little program instead of `minicom.`
+I don't like serial communications programs taking over the terminal.  So I use this little program instead.
 
 Use cases include:
+* Connecting to UARTs of microcontroller, like Raspberry Pi Pico and STM32.
 * Communicating with the consoles of servers (e.g. old SGI IRIX boxes 20 in the early 2000's)
 * Some smartphones have a serial console bootloader mode in which you can update the firmware, debug flash memory, and things like that.  For example, one can power on some phones by HTC while pressing the phone's camera button and the phone will automatically export a USB serial device on the mini-USB port.
 * `serial` contains **very** rudimentary support for macros to aid repeatedly issuing very similar, very arcane bootloader commands.
@@ -19,7 +18,7 @@ Use cases include:
 
 Build it on Linux, MacOS,and Cygwin e.g. from bash or zsh using:
 ```
-    CFLAGS="--std=c++11 -Wall" make serial
+    CFLAGS="--std=c++17 -Wall" make serial
 ```
 
 Run `serial` without arguments to see usage information.
@@ -72,3 +71,9 @@ In the Linux terminal, look for /dev/ttyUSB0.  That can be used as the port for 
 ```
 $ serial /dev/ttyUSB0 19200
 ```
+
+*September 2nd, 2024*
+
+* Fixed a long-standing bug in which 2 stop bits were being requested because of an incorrect flag setting.
+* Upgraded the style a tiny bit.
+* Handle ENXIO, which at least MacOS uses to indicate that the device was disconnected.
