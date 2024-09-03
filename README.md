@@ -1,7 +1,8 @@
 This tool opens
-a device at a particular baud rate a "8,N,1", hooks the terminal to the serial
-port, and gets out of the way.  Run it something like the following,
-then press tilde (`~`) then period to exit.
+a device at a particular baud rate and "8,N,1", hooks the terminal
+to the device, and gets out of the way.
+
+Run it something like the following, then press tilde (`~`) then period to exit.
 
 ```
 serial /dev/tty01 19200
