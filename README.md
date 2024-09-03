@@ -13,10 +13,10 @@ serial /dev/tty01 19200
 I don't like serial communications programs taking over the terminal.  So I use this little program instead.
 
 Use cases include:
-* Connecting to UARTs of microcontrollers like the Raspberry Pi Pico, STM32 series, and PIC series
+* Connecting to UARTs of microcontrollers like the Raspberry Pi Pico, STM32 series, and PIC series.
 * Some smartphones have a serial console bootloader mode in which you can update the firmware, debug flash memory, and things like that.  For example, one can power on some phones by HTC while pressing the phone's camera button and the phone will automatically export a USB serial device on the mini-USB port.
-* GRUB has the ability to use a serial port as its terminal and `serial` from another machine can allow a user to drive GRUB
-* Communicating with the consoles of servers (e.g. old SGI IRIX boxes 20 in the early 2000's)
+* GRUB has the ability to use a serial port as its terminal and `serial` from another machine can allow a user to drive GRUB.
+* Communicating with the consoles of servers (e.g. old SGI IRIX boxes 20 in the early 2000's).
 
 # Features
 
