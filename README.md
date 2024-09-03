@@ -22,7 +22,7 @@ Use cases include:
 Build it on Linux, MacOS,and Cygwin e.g. from bash or zsh using:
 
 ```
-    CFLAGS="--std=c++17 -Wall" make serial
+    CXXFLAGS="--std=c++17 -Wall" make serial
 ```
 
 Run `serial` without arguments to see usage information.
