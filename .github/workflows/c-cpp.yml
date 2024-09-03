@@ -34,5 +34,6 @@ jobs:
       uses: egor-tensin/setup-cygwin@v4
       with:
         packages: cmake gcc-g++
+    - uses: actions/checkout@v3
     - name: make
       run: make CXXFLAGS="-std=c++17 -Wall" serial
