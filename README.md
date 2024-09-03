@@ -1,3 +1,5 @@
+![Build](https://github.com/bradgrantham/simple-serial-terminal/actions/workflows/c-cpp.yml/badge.svg)
+
 # Introduction
 
 This tool opens a device at a particular baud rate and "8,N,1", hooks the terminal to the device, and gets out of the way.
