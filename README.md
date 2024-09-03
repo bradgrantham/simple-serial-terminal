@@ -1,4 +1,4 @@
-##### Introduction
+# Introduction
 
 This tool opens a device at a particular baud rate and "8,N,1", hooks the terminal to the device, and gets out of the way.
 
@@ -17,7 +17,7 @@ Use cases include:
 * `serial` contains very rudimentary support for macros to aid repeatedly issuing very similar, very arcane bootloader commands.
 * GRUB has the ability to use a serial port as its terminal and `serial` from another machine can allow a user to drive GRUB
 
-##### Building
+# Building
 
 Build it on Linux, MacOS,and Cygwin e.g. from bash or zsh using:
 
@@ -31,15 +31,17 @@ Please create issues if you find a bug or create a pull request with a fix or en
 
 (One thing `serial` really needs is the ability to change the escape character from tilde to something else.  I find myself logging out of `ssh` more often than I'd like when I really meant to just disconnect from the serial port.)
 
-##### May 9th, 2010
+## Updates
+
+### May 9th, 2010
 
 Joost Bruynooghe pointed out that I was missing an argument in a printf on line 143, and that could conceivably have lead to junk output or possibly a crash.  The code was **not** compiling without warnings. I have updated the source code with his fix.  Thanks, Joost!
 
-##### June 18th, 2022
+### June 18th, 2022
 
 Chris Browning mentioned `serial` in a [StackOverflow post](https://stackoverflow.com/a/43925904) many years ago.  He posted his version with a bug fix at https://github.com/lime45/serial .
 
-##### January 6th, 2024
+### January 6th, 2024
 
 Nick Thomas (nethomas1968@gmail.com) tested this in WSL2 (Windows Subsystem for Linux).
 
@@ -67,7 +69,7 @@ In the Linux terminal, look for /dev/ttyUSB0.  That can be used as the port for 
 $ serial /dev/ttyUSB0 19200
 ```
 
-##### September 2nd, 2024
+### September 2nd, 2024
 
 * Fixed a long-standing bug in which 2 stop bits were being requested because of an incorrect flag setting.
 * Upgraded the style a tiny bit.
