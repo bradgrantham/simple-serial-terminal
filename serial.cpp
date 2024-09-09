@@ -93,24 +93,24 @@ usage: %s serialportfile baud
 e.g.: %s /dev/ttyS0 38400
 
 The file $HOME/.serial (%s/.serial in your specific case) can also
-contain 10 string presets which are emitted when pressing \"~\" (tilde)
-followed by one of the keys \"1\" through \"0\".
+contain 10 string presets which are emitted when pressing "~" (tilde)
+followed by one of the keys "1" through "0".
 This file contains one preset per line, of the format:
 
     name-of-preset preset-string-here
 
 The preset string itself can contain spaces and also can contain embedded
-newlines in the form \"\\n\".  Here's a short example file:
+newlines in the form "\n".  Here's a short example file:
 
-    restart-device reboot\\n
-    initiate-connection telnet distant-machine\\nexport DISPLAY=flebbenge:0\\n
+    restart-device reboot\n
+    initiate-connection telnet distant-machine\nexport DISPLAY=flebbenge:0\n
 
-Pressing \"~\" then 1 will send \"reboot\" and a newline over the serial port.
-Pressing \"~\" then 2 will send \"telnet distant-machine\" over the serial
-port, then a newline, then \"export DISPLAY=flebbenge:0\", and then
+Pressing "~" then 1 will send "reboot" and a newline over the serial port.
+Pressing "~" then 2 will send "telnet distant-machine" over the serial
+port, then a newline, then "export DISPLAY=flebbenge:0", and then
 another newline.
 
-When running, press \"~\" (tilde) and then \"h\" for some help.
+When running, press "~" (tilde) and then "h" for some help.
 )";
 
 void usage(char *progname)
