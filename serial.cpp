@@ -89,7 +89,7 @@ char presetStrings[10][16384]; // should probably use std::string
 const char* usageString = R"(
 serial v1.0 by Brad Grantham, grantham@plunk.org
 
-usage: %s serialportfile baud
+usage: %s [--lk] [--watch] serialportfile baud
 e.g.: %s /dev/ttyS0 38400
 
 The file $HOME/.serial (%s/.serial in your specific case) can also
@@ -127,193 +127,13 @@ key help:
     p   - print contents of presets
 )";
 
-int main(int argc, char **argv)
+static int open_serial(char const *pathname, unsigned int baud)
 {
-    int             speed;
-    int             duplex = 0, crnl = 0;
-    int             serial;
-    int		    tty_in, tty_out;
-    struct termios  options; 
-    struct termios  old_stdin_termios; 
-    unsigned int    baud;
-    char            stringbuf[16384];
-    bool	    done = false;
-    fd_set   reads;
-    struct timeval  timeout;
+    struct termios options; 
 
-    char *programName = argv[0];
-    argv++;
-    argc--;
-
-    while((argc > 0) && (argv[0][0] == '-'))
-    {
-        if(strcmp(argv[0], "--help") == 0)
-        {
-            argc--; argv++;
-            usage(programName);
-            exit(EXIT_SUCCESS);
-        }
-        else
-        {
-            printf("unknown option \"%s\"\n", argv[0]);
-            usage(programName);
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    bool saw_tilde = false;
-
-    FILE *presetFile;
-    char presetName[512];
-
-    for(int i = 0; i < 10; i++)
-    {
-        presetStrings[i][0] = '\0';
-    }
-
-    snprintf(presetName, sizeof(presetName), "%s/.serial", getenv("HOME"));
-    presetFile = fopen(presetName, "r");
-
-    if(presetFile == NULL)
-    {
-
-        fprintf(stderr, "couldn't open preset strings file \"%s\"\n", presetName);
-        fprintf(stderr, "proceeding without preset strings.\n");
-
-    }
-    else
-    {
-
-        for(int i = 0; i < 10; i++)
-        {
-            int which = (i + 1) % 10;
-
-            if(fscanf(presetFile, "%s ", presetNames[which]) != 1)
-            {
-                break;
-	    }
-
-            if(fgets(stringbuf, sizeof(stringbuf) - 1, presetFile) == NULL)
-            {
-                fprintf(stderr, "preset for %d (\"%s\") had a name but no string.  Ignored.\n", which, presetNames[which]);
-                break;
-            }
-            stringbuf[strlen(stringbuf) - 1] = '\0';
-
-            char *dst = presetStrings[which], *src = stringbuf;
-            while(*src)
-            {
-                if(src[0] == '\\' && src[1] == 'n')
-                {
-                    *dst++ = '\n';
-                    src += 2;
-                }
-                else
-                {
-                    *dst++ = *src++;
-                }
-            }
-            *dst++ = '\0';
-        }
-
-        fclose(presetFile);
-    }
-
-    if(argc < 2)
-    {
-        usage(programName);
-	exit(EXIT_FAILURE);
-    }
-
-    if(argv[1][0] < '0' || argv[1][0] > '9')
-    {
-        usage(programName);
-	exit(EXIT_FAILURE);
-    }
-
-    baud = (unsigned int) atoi(argv[1]);
-    auto found = baudMapping.find(baud);
-    if(found == baudMapping.end())
-    {
-	fprintf(stderr, "Didn't understand baud rate \"%s\"\n", argv[1]);
-	exit(EXIT_FAILURE);
-    }
-    baud = found->second;
-
-    if(false) printf("baud mapping chosen: %d (0x%X)\n", baud, baud);
-
-    tty_in = dup(0);
-    if(tty_in == -1)
-    {
-	fprintf(stderr, "Can't open dup of stdin\n");
-	exit(EXIT_FAILURE);
-    }
-
-    if(fcntl(tty_in, F_SETFL, O_NONBLOCK) == -1)
-    {
-	fprintf(stderr, "Failed to set nonblocking stdin\n");
-	exit(EXIT_FAILURE);
-    }
-
-    tty_out = dup(1);
-    if(tty_out == -1)
-    {
-	fprintf(stderr, "Can't open dup of stdout\n");
-	exit(EXIT_FAILURE);
-    }
-
-    serial = open(argv[0], O_RDWR | O_NOCTTY | O_NONBLOCK);
-    if(serial == -1)
-    {
-	fprintf(stderr, "Can't open serial port \"%s\"\n", argv[0]);
-	exit(EXIT_FAILURE);
-    }
-
-#if 0
-    if(fcntl(serial, F_SETFL, 0) == -1)
-    {
-	fprintf(stderr, "Failed to reset fcntl on serial\n");
-	exit(EXIT_FAILURE);
-    }
-#endif
-
-    /*
-     * get the current options 
-     */
-    tcgetattr(tty_in, &old_stdin_termios);
-    tcgetattr(tty_in, &options);
-
-    /*
-     * set raw input, 1 second timeout 
-     */
-    options.c_cflag |= (CLOCAL | CREAD);
-    options.c_cc[VMIN] = 0;
-    options.c_cc[VTIME] = 10;
-
-    options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
-    options.c_iflag &= ~INLCR;
-    options.c_iflag &= ~ICRNL;
-
-    /*
-     * Miscellaneous stuff 
-     */
-    options.c_cflag |= (CLOCAL | CREAD);	/* Enable receiver, set
-						 * local */
-    options.c_iflag |= (IXON | IXOFF);	/* Software flow control */
-    options.c_lflag = 0;	/* no local flags */
-    options.c_cflag |= HUPCL;	/* Drop DTR on close */
-
-    /*
-     * Clear the line 
-     */
-    tcflush(tty_in, TCIFLUSH);
-
-    /*
-     * Update the options synchronously 
-     */
-    if (tcsetattr(tty_in, TCSANOW, &options) != 0) {
-	perror("setting stdin tc");
-	goto restore;
+    int serial = open(pathname, O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if (serial == -1) {
+        return -1;
     }
 
     /*
@@ -358,11 +178,15 @@ int main(int argc, char **argv)
     options.c_cflag |= HUPCL;	/* Drop DTR on close */
 
     cfsetispeed(&options, baud);
-    speed = cfgetispeed(&options);
-    printf("set tty input to speed %d, expected %d\n", speed, baud);
+    speed_t speed = cfgetispeed(&options);
+    if (speed != baud) {
+        printf("set tty input to speed %lu, expected %d\n", speed, baud);
+    }
     cfsetospeed(&options, baud);
     speed = cfgetospeed(&options);
-    printf("set tty output to speed %d, expected %d\n", speed, baud);
+    if (speed != baud) {
+        printf("set tty output to speed %lu, expected %d\n", speed, baud);
+    }
 
     /*
      * Clear the line 
@@ -372,19 +196,261 @@ int main(int argc, char **argv)
     if (tcsetattr(serial, TCSANOW, &options) != 0)
     {
 	perror("setting serial tc");
-	goto restore;
     }
     tcflush(serial, TCIFLUSH);
 
+    return serial;
+}
 
-    printf("press \"~\" (tilde) and then \"h\" for some help.\n");
+static int watch_serial(char const *pathname, unsigned int baud)
+{
+    int serial = -1;
+
+    while (serial == -1) {
+        serial = open_serial(pathname, baud);
+        if (serial == -1) {
+            usleep(1000*100); // 100 ms
+        }
+    }
+
+    fprintf(stderr, "[Connected]\n");
+    return serial;
+}
+
+int main(int argc, char **argv)
+{
+    int             duplex = 0, crnl = 0;
+    int             serial;
+    int		    tty_in, tty_out;
+    struct termios  options; 
+    struct termios  old_stdin_termios; 
+    unsigned int    baud;
+    char            stringbuf[16384];
+    bool	    done = false;
+    bool            lk = false;
+    bool            watch = false;
+    fd_set   reads;
+    struct timeval  timeout;
+
+    char *programName = argv[0];
+    argv++;
+    argc--;
+
+    while((argc > 0) && (argv[0][0] == '-'))
+    {
+        if(strcmp(argv[0], "--help") == 0)
+        {
+            argc--; argv++;
+            usage(programName);
+            exit(EXIT_SUCCESS);
+        }
+        else if(strcmp(argv[0], "--lk") == 0)
+        {
+            argc--; argv++;
+            lk = true;
+        }
+        else if(strcmp(argv[0], "--watch") == 0)
+        {
+            argc--; argv++;
+            watch = true;
+        }
+        else
+        {
+            printf("unknown option \"%s\"\n", argv[0]);
+            usage(programName);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    bool saw_tilde = false;
+
+    for(int i = 0; i < 10; i++)
+    {
+        presetStrings[i][0] = '\0';
+    }
+
+    if (!lk) {
+        FILE *presetFile;
+        char presetName[512];
+
+        snprintf(presetName, sizeof(presetName), "%s/.serial", getenv("HOME"));
+        presetFile = fopen(presetName, "r");
+
+        if(presetFile == NULL)
+        {
+
+            fprintf(stderr, "couldn't open preset strings file \"%s\"\n", presetName);
+            fprintf(stderr, "proceeding without preset strings.\n");
+
+        }
+        else
+        {
+
+            for(int i = 0; i < 10; i++)
+            {
+                int which = (i + 1) % 10;
+
+                if(fscanf(presetFile, "%s ", presetNames[which]) != 1)
+                {
+                    break;
+                }
+
+                if(fgets(stringbuf, sizeof(stringbuf) - 1, presetFile) == NULL)
+                {
+                    fprintf(stderr, "preset for %d (\"%s\") had a name but no string.  Ignored.\n", which, presetNames[which]);
+                    break;
+                }
+                stringbuf[strlen(stringbuf) - 1] = '\0';
+
+                char *dst = presetStrings[which], *src = stringbuf;
+                while(*src)
+                {
+                    if(src[0] == '\\' && src[1] == 'n')
+                    {
+                        *dst++ = '\n';
+                        src += 2;
+                    }
+                    else
+                    {
+                        *dst++ = *src++;
+                    }
+                }
+                *dst++ = '\0';
+            }
+
+            fclose(presetFile);
+        }
+    }
+
+    if(argc < 2)
+    {
+        usage(programName);
+	exit(EXIT_FAILURE);
+    }
+
+    if(argv[1][0] < '0' || argv[1][0] > '9')
+    {
+        usage(programName);
+	exit(EXIT_FAILURE);
+    }
+
+    baud = (unsigned int) atoi(argv[1]);
+    auto found = baudMapping.find(baud);
+    if(found == baudMapping.end())
+    {
+	fprintf(stderr, "Didn't understand baud rate \"%s\"\n", argv[1]);
+	exit(EXIT_FAILURE);
+    }
+    baud = found->second;
+
+    if(false) printf("baud mapping chosen: %d (0x%X)\n", baud, baud);
+
+    if (lk)
+    {
+        // Disable all inputs.
+        tty_in = -1;
+    }
+    else
+    {
+        tty_in = dup(0);
+        if(tty_in == -1)
+        {
+            fprintf(stderr, "Can't open dup of stdin\n");
+            exit(EXIT_FAILURE);
+        }
+
+        if(fcntl(tty_in, F_SETFL, O_NONBLOCK) == -1)
+        {
+            fprintf(stderr, "Failed to set nonblocking stdin\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    tty_out = dup(1);
+    if(tty_out == -1)
+    {
+	fprintf(stderr, "Can't open dup of stdout\n");
+	exit(EXIT_FAILURE);
+    }
+
+    char const *serial_pathname = argv[0];
+    serial = open_serial(serial_pathname, baud);
+    if(serial == -1)
+    {
+        if (watch)
+        {
+            fprintf(stderr, "[Waiting for device to come online]\n");
+            serial = watch_serial(serial_pathname, baud);
+        }
+        else
+        {
+            fprintf(stderr, "Can't open serial port \"%s\" (%s)\n", serial_pathname, strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+    }
+
+#if 0
+    if(fcntl(serial, F_SETFL, 0) == -1)
+    {
+	fprintf(stderr, "Failed to reset fcntl on serial\n");
+	exit(EXIT_FAILURE);
+    }
+#endif
+
+    if (tty_in != -1) {
+        /*
+         * get the current options 
+         */
+        tcgetattr(tty_in, &old_stdin_termios);
+        tcgetattr(tty_in, &options);
+
+        /*
+         * set raw input, 1 second timeout 
+         */
+        options.c_cflag |= (CLOCAL | CREAD);
+        options.c_cc[VMIN] = 0;
+        options.c_cc[VTIME] = 10;
+
+        options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+        options.c_iflag &= ~INLCR;
+        options.c_iflag &= ~ICRNL;
+
+        /*
+         * Miscellaneous stuff 
+         */
+        options.c_cflag |= (CLOCAL | CREAD);	/* Enable receiver, set
+                                                     * local */
+        options.c_iflag |= (IXON | IXOFF);	/* Software flow control */
+        options.c_lflag = 0;	/* no local flags */
+        options.c_cflag |= HUPCL;	/* Drop DTR on close */
+
+        /*
+         * Clear the line 
+         */
+        tcflush(tty_in, TCIFLUSH);
+
+        /*
+         * Update the options synchronously 
+         */
+        if (tcsetattr(tty_in, TCSANOW, &options) != 0) {
+            perror("setting stdin tc");
+            goto restore;
+        }
+    }
+
+
+    if (tty_in != -1) {
+        printf("press \"~\" (tilde) and then \"h\" for some help.\n");
+    }
 
     while(!done)
     {
 
 	FD_ZERO(&reads);
 	FD_SET(serial, &reads);
-	FD_SET(tty_in, &reads);
+        if (tty_in != -1) {
+            FD_SET(tty_in, &reads);
+        }
 
         timeout.tv_sec = 0;
         timeout.tv_usec = 500000;
@@ -427,14 +493,25 @@ int main(int argc, char **argv)
                 {
                     if(errno == ENXIO) 
                     {
-                        fprintf(stderr, "The device became unavailble.\n");
-                        fprintf(stderr, "Maybe it was a USB adapter that was unplugged?\n");
+                        if (watch)
+                        {
+                            fprintf(stderr, "[Device disconnected, waiting for it to come back]\n");
+                            close(serial);
+                            serial = watch_serial(serial_pathname, baud);
+                        }
+                        else
+                        {
+                            fprintf(stderr, "The device became unavailable.\n");
+                            fprintf(stderr, "Maybe it was a USB adapter that was unplugged?\n");
+                            fprintf(stderr, "Specify the --watch flag to retry automatically.\n");
+                            done = true;
+                        }
                     }
                     else
                     {
                         fprintf(stderr, "unexpected return of -1 bytes from read: errno = %d\n", errno);
+                        done = true;
                     }
-		    done = true;
 		    continue;
                 }
 
@@ -448,7 +525,7 @@ int main(int argc, char **argv)
 		write(tty_out, buf, byte_count);
 	    }
 
-	    if(FD_ISSET(tty_in, &reads))
+	    if(tty_in != -1 && FD_ISSET(tty_in, &reads))
             {
 		if(false) printf("Read from TTY\n");
 
@@ -597,14 +674,16 @@ int main(int argc, char **argv)
 
 restore:
 
-    if (tcsetattr(tty_in, TCSANOW, &old_stdin_termios) != 0)
-    {
-	perror("restoring stdin");
-	return (0);
+    if (tty_in != -1) {
+        if (tcsetattr(tty_in, TCSANOW, &old_stdin_termios) != 0)
+        {
+            perror("restoring stdin");
+            return (0);
+        }
+        close(tty_in);
     }
 
     close(serial);
-    close(tty_in);
     close(tty_out);
 
     return 0;
