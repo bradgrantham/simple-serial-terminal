@@ -13,6 +13,8 @@
 #include <errno.h>   /* Error number definitions */
 #include <sys/types.h>
 #include <sys/time.h>
+#include <chrono>
+#include <thread>
 
 // This is needed with --std=c++11.  I haven't investigated further.
 #if defined(__CYGWIN__)
@@ -193,13 +195,13 @@ static int open_serial(char const *pathname, unsigned int baud)
     speed_t speed = cfgetispeed(&options);
     if(speed != baud)
     {
-        printf("set tty input to speed %lu, expected %d\n", speed, baud);
+        printf("set tty input to speed %lu, expected %d\n", (long unsigned int) speed, baud);
     }
     cfsetospeed(&options, baud);
     speed = cfgetospeed(&options);
     if(speed != baud)
     {
-        printf("set tty output to speed %lu, expected %d\n", speed, baud);
+        printf("set tty output to speed %lu, expected %d\n", (long unsigned int) speed, baud);
     }
 
     /*
@@ -226,7 +228,7 @@ static int watch_serial(char const *pathname, unsigned int baud)
         serial = open_serial(pathname, baud);
         if(serial == -1)
         {
-            usleep(1000*100); // 100 ms
+            std::this_thread::sleep_for(std::chrono::microseconds(1000*100)); // 100 ms
         }
     }
 
