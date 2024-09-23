@@ -87,10 +87,19 @@ char presetNames[10][512];
 char presetStrings[10][16384]; // should probably use std::string
 
 const char* usageString = R"(
-serial v1.0 by Brad Grantham, grantham@plunk.org
+serial v1.1 by Brad Grantham, grantham@plunk.org
 
-usage: %s [--lk] [--watch] serialportfile baud
+usage: %s [--monitor] [--watch] serialportfile baud
 e.g.: %s /dev/ttyS0 38400
+
+Options:
+
+    --monitor       Only read from the serial port. Keyboard presses
+                    are not sent and the ~ commands are not supported.
+                    Exit with Ctrl-C.
+
+    --watch         Keep trying to open (and re-open) the serial port
+                    until it succeeds.
 
 The file $HOME/.serial (%s/.serial in your specific case) can also
 contain 10 string presets which are emitted when pressing "~" (tilde)
@@ -127,12 +136,15 @@ key help:
     p   - print contents of presets
 )";
 
+// Open and configure the serial port, returning its file descriptor,
+// or -1 if it can't be opened.
 static int open_serial(char const *pathname, unsigned int baud)
 {
     struct termios options; 
 
     int serial = open(pathname, O_RDWR | O_NOCTTY | O_NONBLOCK);
-    if (serial == -1) {
+    if(serial == -1)
+    {
         return -1;
     }
 
@@ -179,12 +191,14 @@ static int open_serial(char const *pathname, unsigned int baud)
 
     cfsetispeed(&options, baud);
     speed_t speed = cfgetispeed(&options);
-    if (speed != baud) {
+    if(speed != baud)
+    {
         printf("set tty input to speed %lu, expected %d\n", speed, baud);
     }
     cfsetospeed(&options, baud);
     speed = cfgetospeed(&options);
-    if (speed != baud) {
+    if(speed != baud)
+    {
         printf("set tty output to speed %lu, expected %d\n", speed, baud);
     }
 
@@ -193,7 +207,7 @@ static int open_serial(char const *pathname, unsigned int baud)
      */
     tcflush(serial, TCIFLUSH);
 
-    if (tcsetattr(serial, TCSANOW, &options) != 0)
+    if(tcsetattr(serial, TCSANOW, &options) != 0)
     {
 	perror("setting serial tc");
     }
@@ -202,13 +216,16 @@ static int open_serial(char const *pathname, unsigned int baud)
     return serial;
 }
 
+// Keep trying to open the serial port until it succeeds.
 static int watch_serial(char const *pathname, unsigned int baud)
 {
     int serial = -1;
 
-    while (serial == -1) {
+    while(serial == -1)
+    {
         serial = open_serial(pathname, baud);
-        if (serial == -1) {
+        if(serial == -1)
+        {
             usleep(1000*100); // 100 ms
         }
     }
@@ -227,7 +244,7 @@ int main(int argc, char **argv)
     unsigned int    baud;
     char            stringbuf[16384];
     bool	    done = false;
-    bool            lk = false;
+    bool            monitor = false;
     bool            watch = false;
     fd_set   reads;
     struct timeval  timeout;
@@ -244,10 +261,10 @@ int main(int argc, char **argv)
             usage(programName);
             exit(EXIT_SUCCESS);
         }
-        else if(strcmp(argv[0], "--lk") == 0)
+        else if(strcmp(argv[0], "--monitor") == 0)
         {
             argc--; argv++;
-            lk = true;
+            monitor = true;
         }
         else if(strcmp(argv[0], "--watch") == 0)
         {
@@ -269,7 +286,8 @@ int main(int argc, char **argv)
         presetStrings[i][0] = '\0';
     }
 
-    if (!lk) {
+    if(!monitor)
+    {
         FILE *presetFile;
         char presetName[512];
 
@@ -343,9 +361,7 @@ int main(int argc, char **argv)
     }
     baud = found->second;
 
-    if(false) printf("baud mapping chosen: %d (0x%X)\n", baud, baud);
-
-    if (lk)
+    if(monitor)
     {
         // Disable all inputs.
         tty_in = -1;
@@ -377,7 +393,7 @@ int main(int argc, char **argv)
     serial = open_serial(serial_pathname, baud);
     if(serial == -1)
     {
-        if (watch)
+        if(watch)
         {
             fprintf(stderr, "[Waiting for device to come online]\n");
             serial = watch_serial(serial_pathname, baud);
@@ -389,15 +405,8 @@ int main(int argc, char **argv)
         }
     }
 
-#if 0
-    if(fcntl(serial, F_SETFL, 0) == -1)
+    if(tty_in != -1)
     {
-	fprintf(stderr, "Failed to reset fcntl on serial\n");
-	exit(EXIT_FAILURE);
-    }
-#endif
-
-    if (tty_in != -1) {
         /*
          * get the current options 
          */
@@ -432,14 +441,16 @@ int main(int argc, char **argv)
         /*
          * Update the options synchronously 
          */
-        if (tcsetattr(tty_in, TCSANOW, &options) != 0) {
+        if(tcsetattr(tty_in, TCSANOW, &options) != 0)
+        {
             perror("setting stdin tc");
             goto restore;
         }
     }
 
 
-    if (tty_in != -1) {
+    if(tty_in != -1)
+    {
         printf("press \"~\" (tilde) and then \"h\" for some help.\n");
     }
 
@@ -448,7 +459,8 @@ int main(int argc, char **argv)
 
 	FD_ZERO(&reads);
 	FD_SET(serial, &reads);
-        if (tty_in != -1) {
+        if(tty_in != -1)
+        {
             FD_SET(tty_in, &reads);
         }
 
@@ -493,7 +505,7 @@ int main(int argc, char **argv)
                 {
                     if(errno == ENXIO) 
                     {
-                        if (watch)
+                        if(watch)
                         {
                             fprintf(stderr, "[Device disconnected, waiting for it to come back]\n");
                             close(serial);
@@ -674,8 +686,9 @@ int main(int argc, char **argv)
 
 restore:
 
-    if (tty_in != -1) {
-        if (tcsetattr(tty_in, TCSANOW, &old_stdin_termios) != 0)
+    if(tty_in != -1)
+    {
+        if(tcsetattr(tty_in, TCSANOW, &old_stdin_termios) != 0)
         {
             perror("restoring stdin");
             return (0);
