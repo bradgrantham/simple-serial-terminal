@@ -228,7 +228,7 @@ static int watch_serial(char const *pathname, unsigned int baud)
         serial = open_serial(pathname, baud);
         if(serial == -1)
         {
-            std::this_thread::sleep_for(std::chrono::microseconds(1000*100)); // 100 ms
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
 
