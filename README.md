@@ -23,6 +23,17 @@ Use cases include:
 * `serial` contains very rudimentary support for macros to aid repeatedly issuing very similar, very arcane bootloader commands.
 * `serial` is very easy to build and very easy to run.  (Once you know the name of the serial device!)
 
+# Command-line options
+
+## `--monitor`
+
+Only _read_ from the serial port. Keyboard presses are not sent and the ~
+commands are not supported. Exit with Ctrl-C.
+
+## `--watch`
+
+Keep trying to open (and re-open) the serial port until it succeeds.
+
 # Building
 
 Build it on Linux, MacOS,and Cygwin e.g. from bash or zsh using:
@@ -80,3 +91,7 @@ $ serial /dev/ttyUSB0 19200
 * Fixed a long-standing bug in which 2 stop bits were being requested because of an incorrect flag setting.
 * Upgraded the style a tiny bit.
 * Handle ENXIO, which at least MacOS uses to indicate that the device was disconnected.
+
+### September 23rd, 2024
+
+* Added `--monitor` and `--watch` flags (Lawrence Kesteloot).
