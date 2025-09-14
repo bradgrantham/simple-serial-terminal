@@ -91,17 +91,20 @@ char presetStrings[10][16384]; // should probably use std::string
 const char* usageString = R"(
 serial v1.1 by Brad Grantham, grantham@plunk.org
 
-usage: %s [--monitor] [--watch] serialportfile baud
+usage: %s [options] serialportfile baud
 e.g.: %s /dev/ttyS0 38400
 
 Options:
 
-    --monitor       Only read from the serial port. Keyboard presses
-                    are not sent and the ~ commands are not supported.
-                    Exit with Ctrl-C.
+    --monitor
+        Only _read_ from the serial port. Keyboard presses are not sent
+        and the ~ commands are not supported. Exit with Ctrl-C.
 
-    --watch         Keep trying to open (and re-open) the serial port
-                    until it succeeds.
+    --watch
+        Keep trying to open (and re-open) the serial port until it succeeds.
+
+    --expect-disconnect
+        If the connection disconnects, don't print a warning message.
 
 The file $HOME/.serial (%s/.serial in your specific case) can also
 contain 10 string presets which are emitted when pressing "~" (tilde)
@@ -248,6 +251,7 @@ int main(int argc, char **argv)
     bool	    done = false;
     bool            monitor = false;
     bool            watch = false;
+    bool            expect_disconnect = false;
     fd_set   reads;
     struct timeval  timeout;
 
@@ -272,6 +276,11 @@ int main(int argc, char **argv)
         {
             argc--; argv++;
             watch = true;
+        }
+        else if(strcmp(argv[0], "--expect-disconnect") == 0)
+        {
+            argc--; argv++;
+            expect_disconnect = true;
         }
         else
         {
@@ -515,9 +524,12 @@ int main(int argc, char **argv)
                         }
                         else
                         {
-                            fprintf(stderr, "The device became unavailable.\n");
-                            fprintf(stderr, "Maybe it was a USB adapter that was unplugged?\n");
-                            fprintf(stderr, "Specify the --watch flag to retry automatically.\n");
+                            if(!expect_disconnect)
+                            {
+                                fprintf(stderr, "The device became unavailable.\n");
+                                fprintf(stderr, "Maybe it was a USB adapter that was unplugged?\n");
+                                fprintf(stderr, "Specify the --watch flag to retry automatically.\n");
+                            }
                             done = true;
                         }
                     }

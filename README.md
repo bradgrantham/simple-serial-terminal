@@ -34,6 +34,11 @@ commands are not supported. Exit with Ctrl-C.
 
 Keep trying to open (and re-open) the serial port until it succeeds.
 
+## `--expect-disconnect`
+
+Normally if the connection is disconnected, a warning message is displayed.
+This flag suppressed this message.
+
 # Building
 
 Build it on Linux, MacOS,and Cygwin e.g. from bash or zsh using:
