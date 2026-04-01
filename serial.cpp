@@ -129,7 +129,8 @@ When running, press "~" (tilde) and then "h" for some help.
 
 void usage(char *progname)
 {
-    printf(usageString, progname, progname, getenv("HOME"));
+    const char *home = getenv("HOME");
+    printf(usageString, progname, progname, home ? home : "(HOME not set)");
 }
 
 const char* keyHelpString = R"(
@@ -167,7 +168,7 @@ static int open_serial(char const *pathname, unsigned int baud)
     options.c_cc[VTIME] = 10;
 
 
-    options.c_iflag &= ~INPCK;	/* Enable parity checking */
+    options.c_iflag &= ~INPCK;	/* Disable parity checking */
     options.c_iflag |= IGNPAR;
 
     options.c_cflag &= ~PARENB;	/* Clear parity enable */
@@ -177,34 +178,31 @@ static int open_serial(char const *pathname, unsigned int baud)
 
     options.c_cflag &= ~CRTSCTS;
 
-    options.c_oflag &= ~(IXON | IXOFF | IXANY);	/* no flow control */
-
-    options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
     options.c_oflag &= ~OPOST;	/* No output processing */
     options.c_iflag &= ~INLCR;	/* Don't convert linefeeds */
     options.c_iflag &= ~ICRNL;	/* Don't convert linefeeds */
 
     /*
-     * Miscellaneous stuff 
+     * Miscellaneous stuff
      */
     options.c_cflag |= (CLOCAL | CREAD);	/* Enable receiver, set
 						 * local */
 
     options.c_iflag |= (IXON | IXOFF);	/* Software flow control */
-    options.c_lflag = 0;	/* no local flags */
+    options.c_lflag = 0;	/* no local flags, no echo, no canon */
     options.c_cflag |= HUPCL;	/* Drop DTR on close */
 
     cfsetispeed(&options, baud);
     speed_t speed = cfgetispeed(&options);
     if(speed != baud)
     {
-        printf("set tty input to speed %lu, expected %d\n", (long unsigned int) speed, baud);
+        printf("set tty input to speed %lu, expected %u\n", (long unsigned int) speed, baud);
     }
     cfsetospeed(&options, baud);
     speed = cfgetospeed(&options);
     if(speed != baud)
     {
-        printf("set tty output to speed %lu, expected %d\n", (long unsigned int) speed, baud);
+        printf("set tty output to speed %lu, expected %u\n", (long unsigned int) speed, baud);
     }
 
     /*
@@ -302,52 +300,60 @@ int main(int argc, char **argv)
         FILE *presetFile;
         char presetName[512];
 
-        snprintf(presetName, sizeof(presetName), "%s/.serial", getenv("HOME"));
-        presetFile = fopen(presetName, "r");
-
-        if(presetFile == NULL)
+        const char *home = getenv("HOME");
+        if(home == NULL)
         {
-
-            fprintf(stderr, "couldn't open preset strings file \"%s\"\n", presetName);
-            fprintf(stderr, "proceeding without preset strings.\n");
-
+            fprintf(stderr, "HOME environment variable not set, skipping preset strings.\n");
         }
         else
         {
+            snprintf(presetName, sizeof(presetName), "%s/.serial", home);
+            presetFile = fopen(presetName, "r");
 
-            for(int i = 0; i < 10; i++)
+            if(presetFile == NULL)
             {
-                int which = (i + 1) % 10;
 
-                if(fscanf(presetFile, "%s ", presetNames[which]) != 1)
-                {
-                    break;
-                }
+                fprintf(stderr, "couldn't open preset strings file \"%s\"\n", presetName);
+                fprintf(stderr, "proceeding without preset strings.\n");
 
-                if(fgets(stringbuf, sizeof(stringbuf) - 1, presetFile) == NULL)
-                {
-                    fprintf(stderr, "preset for %d (\"%s\") had a name but no string.  Ignored.\n", which, presetNames[which]);
-                    break;
-                }
-                stringbuf[strlen(stringbuf) - 1] = '\0';
-
-                char *dst = presetStrings[which], *src = stringbuf;
-                while(*src)
-                {
-                    if(src[0] == '\\' && src[1] == 'n')
-                    {
-                        *dst++ = '\n';
-                        src += 2;
-                    }
-                    else
-                    {
-                        *dst++ = *src++;
-                    }
-                }
-                *dst++ = '\0';
             }
+            else
+            {
 
-            fclose(presetFile);
+                for(int i = 0; i < 10; i++)
+                {
+                    int which = (i + 1) % 10;
+
+                    if(fscanf(presetFile, "%s ", presetNames[which]) != 1)
+                    {
+                        break;
+                    }
+
+                    if(fgets(stringbuf, sizeof(stringbuf) - 1, presetFile) == NULL)
+                    {
+                        fprintf(stderr, "preset for %d (\"%s\") had a name but no string.  Ignored.\n", which, presetNames[which]);
+                        break;
+                    }
+                    stringbuf[strlen(stringbuf) - 1] = '\0';
+
+                    char *dst = presetStrings[which], *src = stringbuf;
+                    while(*src)
+                    {
+                        if(src[0] == '\\' && src[1] == 'n')
+                        {
+                            *dst++ = '\n';
+                            src += 2;
+                        }
+                        else
+                        {
+                            *dst++ = *src++;
+                        }
+                    }
+                    *dst++ = '\0';
+                }
+
+                fclose(presetFile);
+            }
         }
     }
 
@@ -431,17 +437,16 @@ int main(int argc, char **argv)
         options.c_cc[VMIN] = 0;
         options.c_cc[VTIME] = 10;
 
-        options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
         options.c_iflag &= ~INLCR;
         options.c_iflag &= ~ICRNL;
 
         /*
-         * Miscellaneous stuff 
+         * Miscellaneous stuff
          */
         options.c_cflag |= (CLOCAL | CREAD);	/* Enable receiver, set
                                                      * local */
         options.c_iflag |= (IXON | IXOFF);	/* Software flow control */
-        options.c_lflag = 0;	/* no local flags */
+        options.c_lflag = 0;	/* no local flags, no echo, no canon */
         options.c_cflag |= HUPCL;	/* Drop DTR on close */
 
         /*
