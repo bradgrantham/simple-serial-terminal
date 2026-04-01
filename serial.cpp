@@ -2,6 +2,7 @@
 // GUC-232A came up as /dev/com4 just now (I think)
 
 // GCC and CLANG: g++ -std=c++11 -Wall -Wpedantic -Wextra serial.cpp -o serial
+// Add -DDEBUG for debug output
 
 #include <map>   /* Standard input/output definitions */
 #include <stdio.h>   /* Standard input/output definitions */
@@ -21,7 +22,13 @@
 #include <sys/select.h>
 #endif
 
-std::map<int, int> baudMapping = 
+#ifdef DEBUG
+#define dbprintf(...) printf(__VA_ARGS__)
+#else
+#define dbprintf(...) ((void)0)
+#endif
+
+std::map<int, int> baudMapping =
 {
     {0, B0},
     {50, B50},
@@ -146,7 +153,7 @@ key help:
 // or -1 if it can't be opened.
 static int open_serial(char const *pathname, unsigned int baud)
 {
-    struct termios options; 
+    struct termios options;
 
     int serial = open(pathname, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if(serial == -1)
@@ -154,43 +161,25 @@ static int open_serial(char const *pathname, unsigned int baud)
         return -1;
     }
 
-    /*
-     * get the current options 
-     */
     tcgetattr(serial, &options);
 
-    /*
-     * set raw input, 1 second timeout 
-     */
-    options.c_cflag |= (CLOCAL | CREAD);
+    // Control flags: 8N1, no HW flow control, enable receiver, local mode, hangup on close
+    options.c_cflag &= ~(PARENB | CSTOPB | CSIZE | CRTSCTS);
+    options.c_cflag |= (CS8 | CLOCAL | CREAD | HUPCL);
+
+    // Input flags: ignore parity, SW flow control, no linefeed conversion
+    options.c_iflag &= ~(INPCK | INLCR | ICRNL);
+    options.c_iflag |= (IGNPAR | IXON | IXOFF);
+
+    // Output flags: raw output
     options.c_oflag &= ~OPOST;
+
+    // Local flags: raw mode (no canon, no echo, no signals)
+    options.c_lflag = 0;
+
+    // Read returns after 1 second or when data is available
     options.c_cc[VMIN] = 0;
     options.c_cc[VTIME] = 10;
-
-
-    options.c_iflag &= ~INPCK;	/* Disable parity checking */
-    options.c_iflag |= IGNPAR;
-
-    options.c_cflag &= ~PARENB;	/* Clear parity enable */
-    options.c_cflag &= ~CSTOPB;
-    options.c_cflag &= ~CSIZE;
-    options.c_cflag |= CS8;
-
-    options.c_cflag &= ~CRTSCTS;
-
-    options.c_oflag &= ~OPOST;	/* No output processing */
-    options.c_iflag &= ~INLCR;	/* Don't convert linefeeds */
-    options.c_iflag &= ~ICRNL;	/* Don't convert linefeeds */
-
-    /*
-     * Miscellaneous stuff
-     */
-    options.c_cflag |= (CLOCAL | CREAD);	/* Enable receiver, set
-						 * local */
-
-    options.c_iflag |= (IXON | IXOFF);	/* Software flow control */
-    options.c_lflag = 0;	/* no local flags, no echo, no canon */
-    options.c_cflag |= HUPCL;	/* Drop DTR on close */
 
     cfsetispeed(&options, baud);
     speed_t speed = cfgetispeed(&options);
@@ -205,9 +194,6 @@ static int open_serial(char const *pathname, unsigned int baud)
         printf("set tty output to speed %lu, expected %u\n", (long unsigned int) speed, baud);
     }
 
-    /*
-     * Clear the line 
-     */
     tcflush(serial, TCIFLUSH);
 
     if(tcsetattr(serial, TCSANOW, &options) != 0)
@@ -237,15 +223,163 @@ static int watch_serial(char const *pathname, unsigned int baud)
     return serial;
 }
 
+// Load preset strings from ~/.serial into the global presetNames/presetStrings arrays.
+static void load_presets()
+{
+    for(int i = 0; i < 10; i++)
+    {
+        presetStrings[i][0] = '\0';
+    }
+
+    const char *home = getenv("HOME");
+    if(home == NULL)
+    {
+        fprintf(stderr, "HOME environment variable not set, skipping preset strings.\n");
+        return;
+    }
+
+    char presetPath[512];
+    snprintf(presetPath, sizeof(presetPath), "%s/.serial", home);
+    FILE *presetFile = fopen(presetPath, "r");
+
+    if(presetFile == NULL)
+    {
+        fprintf(stderr, "couldn't open preset strings file \"%s\"\n", presetPath);
+        fprintf(stderr, "proceeding without preset strings.\n");
+        return;
+    }
+
+    char stringbuf[16384];
+
+    for(int i = 0; i < 10; i++)
+    {
+        int which = (i + 1) % 10;
+
+        if(fscanf(presetFile, "%s ", presetNames[which]) != 1)
+        {
+            break;
+        }
+
+        if(fgets(stringbuf, sizeof(stringbuf) - 1, presetFile) == NULL)
+        {
+            fprintf(stderr, "preset for %d (\"%s\") had a name but no string.  Ignored.\n", which, presetNames[which]);
+            break;
+        }
+        stringbuf[strlen(stringbuf) - 1] = '\0';
+
+        char *dst = presetStrings[which], *src = stringbuf;
+        while(*src)
+        {
+            if(src[0] == '\\' && src[1] == 'n')
+            {
+                *dst++ = '\n';
+                src += 2;
+            }
+            else
+            {
+                *dst++ = *src++;
+            }
+        }
+        *dst++ = '\0';
+    }
+
+    fclose(presetFile);
+}
+
+// Handle a tilde command keystroke. Returns true if the main loop should
+// exit, false otherwise.
+static bool handle_tilde_command(unsigned char key, int serial, int tty_out,
+                                 int &duplex, int &crnl)
+{
+    struct termios options;
+
+    if(key == 'h' || key == '?')
+    {
+        printf("%s", keyHelpString);
+        int i;
+        for(i = 0; i < 10; i++)
+        {
+            int which = (i + 1) % 10;
+            if(presetStrings[which][0] == '\0')
+                break;
+            printf("        %d : \"%s\"\n", which, presetNames[which]);
+        }
+        if(i == 0)
+        {
+            printf("        (no preset strings)\n");
+        }
+    }
+    else if(key >= '0' && key <= '9')
+    {
+        int which = key - '0';
+        write(serial, presetStrings[which], strlen(presetStrings[which]));
+    }
+    else if(key == 'p')
+    {
+        printf("preset strings from ~/.serial:\n");
+        int i;
+        for(i = 0; i < 10; i++)
+        {
+            int which = (i + 1) % 10;
+            if(presetStrings[which][0] == '\0')
+            {
+                break;
+            }
+            printf("  %d, \"%15s\",  : \"%s\"\n", which, presetNames[which], presetStrings[which]);
+        }
+        if(i == 0)
+        {
+            printf("  (no preset strings)\n");
+        }
+    }
+    else if(key == '.')
+    {
+        return true;
+    }
+    else if(key == 'd')
+    {
+        duplex = !duplex;
+    }
+    else if(key == 'n')
+    {
+        crnl = !crnl;
+
+#if 1
+        tcgetattr(serial, &options);
+        if(crnl)
+        {
+            options.c_iflag |= ICRNL;
+        }
+        else
+        {
+            options.c_iflag &= ~ICRNL;
+        }
+        tcsetattr(serial, TCSANOW, &options);
+#endif
+
+        tcgetattr(tty_out, &options);
+        if(crnl)
+        {
+            options.c_oflag |= OCRNL;
+        }
+        else
+        {
+            options.c_oflag &= ~OCRNL;
+        }
+        tcsetattr(tty_out, TCSANOW, &options);
+    }
+
+    return false;
+}
+
 int main(int argc, char **argv)
 {
     int             duplex = 0, crnl = 0;
     int             serial;
     int		    tty_in, tty_out;
-    struct termios  options; 
-    struct termios  old_stdin_termios; 
+    struct termios  options;
+    struct termios  old_stdin_termios;
     unsigned int    baud;
-    char            stringbuf[16384];
     bool	    done = false;
     bool            monitor = false;
     bool            watch = false;
@@ -290,71 +424,9 @@ int main(int argc, char **argv)
 
     bool saw_tilde = false;
 
-    for(int i = 0; i < 10; i++)
-    {
-        presetStrings[i][0] = '\0';
-    }
-
     if(!monitor)
     {
-        FILE *presetFile;
-        char presetName[512];
-
-        const char *home = getenv("HOME");
-        if(home == NULL)
-        {
-            fprintf(stderr, "HOME environment variable not set, skipping preset strings.\n");
-        }
-        else
-        {
-            snprintf(presetName, sizeof(presetName), "%s/.serial", home);
-            presetFile = fopen(presetName, "r");
-
-            if(presetFile == NULL)
-            {
-
-                fprintf(stderr, "couldn't open preset strings file \"%s\"\n", presetName);
-                fprintf(stderr, "proceeding without preset strings.\n");
-
-            }
-            else
-            {
-
-                for(int i = 0; i < 10; i++)
-                {
-                    int which = (i + 1) % 10;
-
-                    if(fscanf(presetFile, "%s ", presetNames[which]) != 1)
-                    {
-                        break;
-                    }
-
-                    if(fgets(stringbuf, sizeof(stringbuf) - 1, presetFile) == NULL)
-                    {
-                        fprintf(stderr, "preset for %d (\"%s\") had a name but no string.  Ignored.\n", which, presetNames[which]);
-                        break;
-                    }
-                    stringbuf[strlen(stringbuf) - 1] = '\0';
-
-                    char *dst = presetStrings[which], *src = stringbuf;
-                    while(*src)
-                    {
-                        if(src[0] == '\\' && src[1] == 'n')
-                        {
-                            *dst++ = '\n';
-                            src += 2;
-                        }
-                        else
-                        {
-                            *dst++ = *src++;
-                        }
-                    }
-                    *dst++ = '\0';
-                }
-
-                fclose(presetFile);
-            }
-        }
+        load_presets();
     }
 
     if(argc < 2)
@@ -424,39 +496,20 @@ int main(int argc, char **argv)
 
     if(tty_in != -1)
     {
-        /*
-         * get the current options 
-         */
         tcgetattr(tty_in, &old_stdin_termios);
         tcgetattr(tty_in, &options);
 
-        /*
-         * set raw input, 1 second timeout 
-         */
-        options.c_cflag |= (CLOCAL | CREAD);
+        // Raw input, 1 second timeout
+        options.c_cflag |= (CLOCAL | CREAD | HUPCL);
         options.c_cc[VMIN] = 0;
         options.c_cc[VTIME] = 10;
 
-        options.c_iflag &= ~INLCR;
-        options.c_iflag &= ~ICRNL;
+        options.c_iflag &= ~(INLCR | ICRNL);
+        options.c_iflag |= (IXON | IXOFF);
+        options.c_lflag = 0;
 
-        /*
-         * Miscellaneous stuff
-         */
-        options.c_cflag |= (CLOCAL | CREAD);	/* Enable receiver, set
-                                                     * local */
-        options.c_iflag |= (IXON | IXOFF);	/* Software flow control */
-        options.c_lflag = 0;	/* no local flags, no echo, no canon */
-        options.c_cflag |= HUPCL;	/* Drop DTR on close */
-
-        /*
-         * Clear the line 
-         */
         tcflush(tty_in, TCIFLUSH);
 
-        /*
-         * Update the options synchronously 
-         */
         if(tcsetattr(tty_in, TCSANOW, &options) != 0)
         {
             perror("setting stdin tc");
@@ -496,30 +549,30 @@ int main(int argc, char **argv)
         else if(result == 0)
         {
 
-	    if(false) printf("select timed out.\n");
+	    dbprintf("select timed out.\n");
 
 	}
         else
-        { 
+        {
 
 	    for(int i = 0 ; i < FD_SETSIZE; i++)
             {
 		if(FD_ISSET(i, &reads))
                 {
-		    if(false) printf("read on %d\n", i);
+		    dbprintf("read on %d\n", i);
 		}
 	    }
 
 	    if(FD_ISSET(serial, &reads))
             {
-		if(false) printf("Read from serial\n");
+		dbprintf("Read from serial\n");
 
                 unsigned char buf[512];
 		int byte_count = read(serial, buf, sizeof(buf));
 
-                if(byte_count == -1) 
+                if(byte_count == -1)
                 {
-                    if(errno == ENXIO) 
+                    if(errno == ENXIO)
                     {
                         if(watch)
                         {
@@ -558,7 +611,7 @@ int main(int argc, char **argv)
 
 	    if(tty_in != -1 && FD_ISSET(tty_in, &reads))
             {
-		if(false) printf("Read from TTY\n");
+		dbprintf("Read from TTY\n");
 
                 unsigned char buf[512];
 		int byte_count = read(tty_in, buf, sizeof(buf));
@@ -568,121 +621,18 @@ int main(int argc, char **argv)
 
                     if(saw_tilde)
                     {
-                        if(buf[0] == 'h' || buf[0] == '?')
-                        {
-
-                            printf("%s", keyHelpString);
-                            int i;
-                            for(i = 0; i < 10; i++)
-                            {
-                                int which = (i + 1) % 10;
-                                if(presetStrings[which][0] == '\0')
-                                    break;
-                                printf("        %d : \"%s\"\n", which, presetNames[which]);
-                            }
-                            if(i == 0)
-                            {
-                                printf("        (no preset strings)\n");
-                            }
-                            saw_tilde = false;
-                            continue;
-
-                        }
-                        else if(buf[0] >= '0' && buf[0] <= '9')
-                        {
-                            
-                            int which = buf[0] - '0';
-                            write(serial, presetStrings[which], strlen(presetStrings[which]));
-                            saw_tilde = false;
-                            continue;
-
-                        }
-                        else if(buf[0] == 'p')
-                        {
-
-                            printf("preset strings from ~/.serial:\n");
-                            int i;
-                            for(i = 0; i < 10; i++)
-                            {
-                                int which = (i + 1) % 10;
-                                if(presetStrings[which][0] == '\0')
-                                {
-                                    break;
-                                }
-                                printf("  %d, \"%15s\",  : \"%s\"\n", which, presetNames[which], presetStrings[which]);
-                            }
-                            if(i == 0) 
-                            {
-                                printf("  (no preset strings)\n");
-                            }
-                            saw_tilde = false;
-                            continue;
-
-                        }
-                        else if(buf[0] == '.')
-                        {
-
-                            done = true;
-                            saw_tilde = false;
-                            continue;
-
-                        }
-                        else if(buf[0] == 'd')
-                        {
-
-                            duplex = !duplex;
-                            saw_tilde = false;
-                            continue;
-
-                        }
-                        else if(buf[0] == 'n')
-                        {
-
-                            crnl = !crnl;
-
-#if 1
-                            tcgetattr(serial, &options);
-                            if(crnl) 
-                            {
-                                options.c_iflag |= ICRNL;
-                            }
-                            else
-                            {
-                                options.c_iflag &= ~ICRNL;
-                            }
-                            tcsetattr(serial, TCSANOW, &options);
-#endif
-
-                            tcgetattr(tty_out, &options);
-                            if(crnl)
-                            {
-                                options.c_oflag |= OCRNL;
-                            }
-                            else
-                            {
-                                options.c_oflag &= ~OCRNL;
-                            }
-                            tcsetattr(tty_out, TCSANOW, &options);
-                            saw_tilde = false;
-
-                            continue;
-                        }
-
+                        saw_tilde = false;
+                        done = handle_tilde_command(buf[0], serial, tty_out,
+                                                    duplex, crnl);
+                        continue;
                     }
                     else if(buf[0] == '~')
                     {
-
                         saw_tilde = true;
-                        continue; /* ick */
-
-                    }
-                    else
-                    {
-
-                        saw_tilde = false;
+                        continue;
                     }
 
-                    if(false) printf("writing %d bytes: '%c', %d\n", byte_count, buf[0], buf[0]);
+                    dbprintf("writing %d bytes: '%c', %d\n", byte_count, buf[0], buf[0]);
                     write(serial, buf, byte_count);
 
                     if(duplex)
