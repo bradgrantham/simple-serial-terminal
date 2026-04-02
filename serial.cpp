@@ -16,6 +16,7 @@
 #include <termios.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <time.h>
 #include <sys/time.h>
 #include <poll.h>
 #include <chrono>
