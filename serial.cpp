@@ -439,6 +439,7 @@ static void print_timestamp()
     struct tm *tm = localtime(&tv.tv_sec);
     printf("[%02d:%02d:%02d.%03d] ", tm->tm_hour, tm->tm_min, tm->tm_sec,
            (int)(tv.tv_usec / 1000));
+    fflush(stdout);
 }
 
 // Write serial data to tty_out, optionally prefixing lines with timestamps.
@@ -600,6 +601,10 @@ static void run_loop(int serial, int tty_in, int tty_out,
 
 int main(int argc, char **argv)
 {
+    // Ensure stdout is line-buffered even when piped, so printf output
+    // stays in sync with write() calls to tty_out.
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     int             serial;
     int             tty_in, tty_out;
     struct termios  options;
