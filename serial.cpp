@@ -4,16 +4,21 @@
 // GCC and CLANG: g++ -std=c++11 -Wall -Wpedantic -Wextra serial.cpp -o serial
 // Add -DDEBUG for debug output
 
-#include <map>   /* Standard input/output definitions */
-#include <stdio.h>   /* Standard input/output definitions */
-#include <string.h>  /* String function definitions */
+#include <map>
+#include <string>
+#include <vector>
+#include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
-#include <unistd.h>  /* UNIX standard function definitions */
-#include <fcntl.h>   /* File control definitions */
-#include <termios.h> /* POSIX terminal control definitions */
-#include <errno.h>   /* Error number definitions */
+#include <signal.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <errno.h>
 #include <sys/types.h>
+#include <time.h>
 #include <sys/time.h>
+#include <poll.h>
 #include <chrono>
 #include <thread>
 
@@ -72,6 +77,10 @@ std::map<int, int> baudMapping =
 
 #else /* B128000 not defined */
 
+    // On macOS, B128000 and friends are not defined. The termios
+    // implementation accepts the raw integer baud rate directly
+    // (e.g. 250000 means 250000 baud), unlike Linux which uses
+    // symbolic constants.
     {250000, 250000},
     {266667, 266667},
     {285714, 285714},
@@ -92,16 +101,46 @@ std::map<int, int> baudMapping =
 #endif /* B128000 */
 };
 
-char presetNames[10][512];
-char presetStrings[10][16384]; // should probably use std::string
+struct Preset {
+    std::string name;
+    std::string value;
+};
+
+std::vector<Preset> presets;
+
+// Signal handling: save terminal state so we can restore on SIGINT/SIGTERM.
+static int saved_tty_in = -1;
+static struct termios saved_termios;
+static bool termios_saved = false;
+
+static void restore_terminal()
+{
+    if(termios_saved && saved_tty_in != -1)
+    {
+        tcsetattr(saved_tty_in, TCSANOW, &saved_termios);
+    }
+}
+
+static void signal_handler(int)
+{
+    restore_terminal();
+    _exit(0);
+}
 
 const char* usageString = R"(
-serial v1.1 by Brad Grantham, grantham@plunk.org
+serial v1.2 by Brad Grantham, grantham@plunk.org
 
-usage: %s [options] serialportfile baud
+usage: %s [options] [serialportfile] [baud]
 e.g.: %s /dev/ttyS0 38400
+      %s --device /dev/ttyS0 --baud 38400
 
 Options:
+
+    --device <path>
+        Serial port device path (alternative to positional argument).
+
+    --baud <rate>
+        Baud rate (alternative to positional argument).
 
     --monitor
         Only _read_ from the serial port. Keyboard presses are not sent
@@ -113,15 +152,19 @@ Options:
     --expect-disconnect
         If the connection disconnects, don't print a warning message.
 
+    --timestamp
+        Prefix each line of received serial data with a timestamp.
+
 The file $HOME/.serial (%s/.serial in your specific case) can also
-contain 10 string presets which are emitted when pressing "~" (tilde)
+contain string presets which are emitted when pressing "~" (tilde)
 followed by one of the keys "1" through "0".
 This file contains one preset per line, of the format:
 
     name-of-preset preset-string-here
 
 The preset string itself can contain spaces and also can contain embedded
-newlines in the form "\n".  Here's a short example file:
+escape sequences: \n (newline), \r (carriage return), \t (tab), and
+\\ (literal backslash).  Here's a short example file:
 
     restart-device reboot\n
     initiate-connection telnet distant-machine\nexport DISPLAY=flebbenge:0\n
@@ -137,7 +180,7 @@ When running, press "~" (tilde) and then "h" for some help.
 void usage(char *progname)
 {
     const char *home = getenv("HOME");
-    printf(usageString, progname, progname, home ? home : "(HOME not set)");
+    printf(usageString, progname, progname, progname, home ? home : "(HOME not set)");
 }
 
 const char* keyHelpString = R"(
@@ -198,7 +241,7 @@ static int open_serial(char const *pathname, unsigned int baud)
 
     if(tcsetattr(serial, TCSANOW, &options) != 0)
     {
-	perror("setting serial tc");
+        perror("setting serial tc");
     }
     tcflush(serial, TCIFLUSH);
 
@@ -223,14 +266,38 @@ static int watch_serial(char const *pathname, unsigned int baud)
     return serial;
 }
 
-// Load preset strings from ~/.serial into the global presetNames/presetStrings arrays.
+// Process escape sequences in a preset string: \n, \r, \t, and backslash.
+static std::string unescape(const char *src)
+{
+    std::string result;
+    while(*src)
+    {
+        if(src[0] == '\\' && src[1])
+        {
+            switch(src[1])
+            {
+                case 'n': result += '\n'; break;
+                case 'r': result += '\r'; break;
+                case 't': result += '\t'; break;
+                case '\\': result += '\\'; break;
+                default:
+                    result += src[0];
+                    result += src[1];
+                    break;
+            }
+            src += 2;
+        }
+        else
+        {
+            result += *src++;
+        }
+    }
+    return result;
+}
+
+// Load preset strings from ~/.serial.
 static void load_presets()
 {
-    for(int i = 0; i < 10; i++)
-    {
-        presetStrings[i][0] = '\0';
-    }
-
     const char *home = getenv("HOME");
     if(home == NULL)
     {
@@ -249,38 +316,27 @@ static void load_presets()
         return;
     }
 
+    char namebuf[512];
     char stringbuf[16384];
 
-    for(int i = 0; i < 10; i++)
+    while(presets.size() < 10)
     {
-        int which = (i + 1) % 10;
-
-        if(fscanf(presetFile, "%s ", presetNames[which]) != 1)
+        if(fscanf(presetFile, "%511s ", namebuf) != 1)
         {
             break;
         }
 
         if(fgets(stringbuf, sizeof(stringbuf) - 1, presetFile) == NULL)
         {
-            fprintf(stderr, "preset for %d (\"%s\") had a name but no string.  Ignored.\n", which, presetNames[which]);
+            fprintf(stderr, "preset \"%s\" had a name but no string.  Ignored.\n", namebuf);
             break;
         }
-        stringbuf[strlen(stringbuf) - 1] = '\0';
+        // Strip trailing newline from fgets
+        size_t len = strlen(stringbuf);
+        if(len > 0 && stringbuf[len - 1] == '\n')
+            stringbuf[len - 1] = '\0';
 
-        char *dst = presetStrings[which], *src = stringbuf;
-        while(*src)
-        {
-            if(src[0] == '\\' && src[1] == 'n')
-            {
-                *dst++ = '\n';
-                src += 2;
-            }
-            else
-            {
-                *dst++ = *src++;
-            }
-        }
-        *dst++ = '\0';
+        presets.push_back({namebuf, unescape(stringbuf)});
     }
 
     fclose(presetFile);
@@ -296,40 +352,43 @@ static bool handle_tilde_command(unsigned char key, int serial, int tty_out,
     if(key == 'h' || key == '?')
     {
         printf("%s", keyHelpString);
-        int i;
-        for(i = 0; i < 10; i++)
-        {
-            int which = (i + 1) % 10;
-            if(presetStrings[which][0] == '\0')
-                break;
-            printf("        %d : \"%s\"\n", which, presetNames[which]);
-        }
-        if(i == 0)
+        if(presets.empty())
         {
             printf("        (no preset strings)\n");
+        }
+        else
+        {
+            for(size_t i = 0; i < presets.size(); i++)
+            {
+                int which = (i + 1) % 10;
+                printf("        %d : \"%s\"\n", which, presets[i].name.c_str());
+            }
         }
     }
     else if(key >= '0' && key <= '9')
     {
-        int which = key - '0';
-        write(serial, presetStrings[which], strlen(presetStrings[which]));
+        // Keys 1-9,0 map to presets 0-9
+        int index = (key == '0') ? 9 : (key - '1');
+        if(index >= 0 && (size_t)index < presets.size())
+        {
+            const std::string &val = presets[index].value;
+            write(serial, val.c_str(), val.size());
+        }
     }
     else if(key == 'p')
     {
         printf("preset strings from ~/.serial:\n");
-        int i;
-        for(i = 0; i < 10; i++)
-        {
-            int which = (i + 1) % 10;
-            if(presetStrings[which][0] == '\0')
-            {
-                break;
-            }
-            printf("  %d, \"%15s\",  : \"%s\"\n", which, presetNames[which], presetStrings[which]);
-        }
-        if(i == 0)
+        if(presets.empty())
         {
             printf("  (no preset strings)\n");
+        }
+        else
+        {
+            for(size_t i = 0; i < presets.size(); i++)
+            {
+                int which = (i + 1) % 10;
+                printf("  %d, \"%s\" : \"%s\"\n", which, presets[i].name.c_str(), presets[i].value.c_str());
+            }
         }
     }
     else if(key == '.')
@@ -372,20 +431,190 @@ static bool handle_tilde_command(unsigned char key, int serial, int tty_out,
     return false;
 }
 
+// Print a timestamp to stdout in [HH:MM:SS.mmm] format.
+static void print_timestamp()
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    struct tm *tm = localtime(&tv.tv_sec);
+    printf("[%02d:%02d:%02d.%03d] ", tm->tm_hour, tm->tm_min, tm->tm_sec,
+           (int)(tv.tv_usec / 1000));
+    fflush(stdout);
+}
+
+// Write serial data to tty_out, optionally prefixing lines with timestamps.
+// at_line_start tracks whether we're at the beginning of a new line.
+static void write_serial_output(int tty_out, const unsigned char *buf,
+                                int byte_count, bool timestamp,
+                                bool &at_line_start)
+{
+    if(!timestamp)
+    {
+        write(tty_out, buf, byte_count);
+        return;
+    }
+
+    for(int i = 0; i < byte_count; i++)
+    {
+        if(at_line_start)
+        {
+            print_timestamp();
+            at_line_start = false;
+        }
+        write(tty_out, &buf[i], 1);
+        if(buf[i] == '\n')
+        {
+            at_line_start = true;
+        }
+    }
+}
+
+// Main event loop. Returns when done.
+static void run_loop(int serial, int tty_in, int tty_out,
+                     char const *serial_pathname, unsigned int baud,
+                     bool watch, bool expect_disconnect, bool timestamp)
+{
+    int duplex = 0, crnl = 0;
+    bool saw_tilde = false;
+    bool at_line_start = true;
+
+    struct pollfd fds[2];
+    int nfds = 0;
+
+    // fds[0] is always the serial port
+    fds[0].fd = serial;
+    fds[0].events = POLLIN;
+    nfds = 1;
+
+    // fds[1] is tty_in, if we have one
+    int tty_poll_index = -1;
+    if(tty_in != -1)
+    {
+        tty_poll_index = nfds;
+        fds[nfds].fd = tty_in;
+        fds[nfds].events = POLLIN;
+        nfds++;
+    }
+
+    bool done = false;
+
+    while(!done)
+    {
+        int result = poll(fds, nfds, 500);
+
+        if(result < 0)
+        {
+            perror("poll");
+            break;
+        }
+        else if(result == 0)
+        {
+            dbprintf("poll timed out.\n");
+            continue;
+        }
+
+        if(fds[0].revents & POLLIN)
+        {
+            dbprintf("Read from serial\n");
+
+            unsigned char buf[512];
+            int byte_count = read(serial, buf, sizeof(buf));
+
+            if(byte_count == -1)
+            {
+                if(errno == ENXIO)
+                {
+                    if(watch)
+                    {
+                        fprintf(stderr, "[Device disconnected, waiting for it to come back]\n");
+                        close(serial);
+                        serial = watch_serial(serial_pathname, baud);
+                        fds[0].fd = serial;
+                    }
+                    else
+                    {
+                        if(!expect_disconnect)
+                        {
+                            fprintf(stderr, "The device became unavailable.\n");
+                            fprintf(stderr, "Maybe it was a USB adapter that was unplugged?\n");
+                            fprintf(stderr, "Specify the --watch flag to retry automatically.\n");
+                        }
+                        done = true;
+                    }
+                }
+                else
+                {
+                    fprintf(stderr, "unexpected return of -1 bytes from read: errno = %d\n", errno);
+                    done = true;
+                }
+                continue;
+            }
+
+            if(byte_count == 0)
+            {
+                fprintf(stderr, "unexpected read of 0 bytes from serial!\n");
+                done = true;
+                continue;
+            }
+
+            write_serial_output(tty_out, buf, byte_count, timestamp, at_line_start);
+        }
+
+        if(tty_poll_index >= 0 && (fds[tty_poll_index].revents & POLLIN))
+        {
+            dbprintf("Read from TTY\n");
+
+            unsigned char buf[512];
+            int byte_count = read(tty_in, buf, sizeof(buf));
+
+            if(byte_count > 0)
+            {
+                if(saw_tilde)
+                {
+                    saw_tilde = false;
+                    done = handle_tilde_command(buf[0], serial, tty_out,
+                                                duplex, crnl);
+                    continue;
+                }
+                else if(buf[0] == '~')
+                {
+                    saw_tilde = true;
+                    continue;
+                }
+
+                dbprintf("writing %d bytes: '%c', %d\n", byte_count, buf[0], buf[0]);
+                write(serial, buf, byte_count);
+
+                if(duplex)
+                {
+                    write(tty_out, buf, byte_count);
+                }
+            }
+            else
+            {
+                fprintf(stderr, "unexpected read of 0 bytes from tty_in!\n");
+                done = true;
+            }
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
-    int             duplex = 0, crnl = 0;
+    // Ensure stdout is line-buffered even when piped, so printf output
+    // stays in sync with write() calls to tty_out.
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     int             serial;
-    int		    tty_in, tty_out;
+    int             tty_in, tty_out;
     struct termios  options;
-    struct termios  old_stdin_termios;
     unsigned int    baud;
-    bool	    done = false;
     bool            monitor = false;
     bool            watch = false;
     bool            expect_disconnect = false;
-    fd_set   reads;
-    struct timeval  timeout;
+    bool            timestamp = false;
+    const char     *device_arg = NULL;
+    const char     *baud_arg = NULL;
 
     char *programName = argv[0];
     argv++;
@@ -414,6 +643,35 @@ int main(int argc, char **argv)
             argc--; argv++;
             expect_disconnect = true;
         }
+        else if(strcmp(argv[0], "--timestamp") == 0)
+        {
+            argc--; argv++;
+            timestamp = true;
+        }
+        else if(strcmp(argv[0], "--device") == 0)
+        {
+            argc--; argv++;
+            if(argc < 1)
+            {
+                fprintf(stderr, "--device requires an argument\n");
+                usage(programName);
+                exit(EXIT_FAILURE);
+            }
+            device_arg = argv[0];
+            argc--; argv++;
+        }
+        else if(strcmp(argv[0], "--baud") == 0)
+        {
+            argc--; argv++;
+            if(argc < 1)
+            {
+                fprintf(stderr, "--baud requires an argument\n");
+                usage(programName);
+                exit(EXIT_FAILURE);
+            }
+            baud_arg = argv[0];
+            argc--; argv++;
+        }
         else
         {
             printf("unknown option \"%s\"\n", argv[0]);
@@ -422,37 +680,41 @@ int main(int argc, char **argv)
         }
     }
 
-    bool saw_tilde = false;
+    // Positional args override --device/--baud if both are given
+    if(argc >= 1)
+        device_arg = argv[0];
+    if(argc >= 2)
+        baud_arg = argv[1];
+
+    if(device_arg == NULL || baud_arg == NULL)
+    {
+        usage(programName);
+        exit(EXIT_FAILURE);
+    }
+
+    if(baud_arg[0] < '0' || baud_arg[0] > '9')
+    {
+        fprintf(stderr, "Baud rate must be a number, got \"%s\"\n", baud_arg);
+        usage(programName);
+        exit(EXIT_FAILURE);
+    }
+
+    baud = (unsigned int) atoi(baud_arg);
+    auto found = baudMapping.find(baud);
+    if(found == baudMapping.end())
+    {
+        fprintf(stderr, "Didn't understand baud rate \"%s\"\n", baud_arg);
+        exit(EXIT_FAILURE);
+    }
+    baud = found->second;
 
     if(!monitor)
     {
         load_presets();
     }
 
-    if(argc < 2)
-    {
-        usage(programName);
-	exit(EXIT_FAILURE);
-    }
-
-    if(argv[1][0] < '0' || argv[1][0] > '9')
-    {
-        usage(programName);
-	exit(EXIT_FAILURE);
-    }
-
-    baud = (unsigned int) atoi(argv[1]);
-    auto found = baudMapping.find(baud);
-    if(found == baudMapping.end())
-    {
-	fprintf(stderr, "Didn't understand baud rate \"%s\"\n", argv[1]);
-	exit(EXIT_FAILURE);
-    }
-    baud = found->second;
-
     if(monitor)
     {
-        // Disable all inputs.
         tty_in = -1;
     }
     else
@@ -474,11 +736,11 @@ int main(int argc, char **argv)
     tty_out = dup(1);
     if(tty_out == -1)
     {
-	fprintf(stderr, "Can't open dup of stdout\n");
-	exit(EXIT_FAILURE);
+        fprintf(stderr, "Can't open dup of stdout\n");
+        exit(EXIT_FAILURE);
     }
 
-    char const *serial_pathname = argv[0];
+    char const *serial_pathname = device_arg;
     serial = open_serial(serial_pathname, baud);
     if(serial == -1)
     {
@@ -496,7 +758,13 @@ int main(int argc, char **argv)
 
     if(tty_in != -1)
     {
-        tcgetattr(tty_in, &old_stdin_termios);
+        tcgetattr(tty_in, &saved_termios);
+        termios_saved = true;
+        saved_tty_in = tty_in;
+
+        signal(SIGINT, signal_handler);
+        signal(SIGTERM, signal_handler);
+
         tcgetattr(tty_in, &options);
 
         // Raw input, 1 second timeout
@@ -515,155 +783,18 @@ int main(int argc, char **argv)
             perror("setting stdin tc");
             goto restore;
         }
-    }
 
-
-    if(tty_in != -1)
-    {
         printf("press \"~\" (tilde) and then \"h\" for some help.\n");
     }
 
-    while(!done)
-    {
-
-	FD_ZERO(&reads);
-	FD_SET(serial, &reads);
-        if(tty_in != -1)
-        {
-            FD_SET(tty_in, &reads);
-        }
-
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 500000;
-
-	int result = select(FD_SETSIZE, &reads, NULL, NULL, &timeout);
-
-	if(result < 0)
-        {
-
-	    perror("select");
-	    done = true;
-	    continue;
-
-	}
-        else if(result == 0)
-        {
-
-	    dbprintf("select timed out.\n");
-
-	}
-        else
-        {
-
-	    for(int i = 0 ; i < FD_SETSIZE; i++)
-            {
-		if(FD_ISSET(i, &reads))
-                {
-		    dbprintf("read on %d\n", i);
-		}
-	    }
-
-	    if(FD_ISSET(serial, &reads))
-            {
-		dbprintf("Read from serial\n");
-
-                unsigned char buf[512];
-		int byte_count = read(serial, buf, sizeof(buf));
-
-                if(byte_count == -1)
-                {
-                    if(errno == ENXIO)
-                    {
-                        if(watch)
-                        {
-                            fprintf(stderr, "[Device disconnected, waiting for it to come back]\n");
-                            close(serial);
-                            serial = watch_serial(serial_pathname, baud);
-                        }
-                        else
-                        {
-                            if(!expect_disconnect)
-                            {
-                                fprintf(stderr, "The device became unavailable.\n");
-                                fprintf(stderr, "Maybe it was a USB adapter that was unplugged?\n");
-                                fprintf(stderr, "Specify the --watch flag to retry automatically.\n");
-                            }
-                            done = true;
-                        }
-                    }
-                    else
-                    {
-                        fprintf(stderr, "unexpected return of -1 bytes from read: errno = %d\n", errno);
-                        done = true;
-                    }
-		    continue;
-                }
-
-		if(byte_count == 0)
-                {
-		    fprintf(stderr, "unexpected read of 0 bytes from serial!\n");
-		    done = true;
-		    continue;
-		}
-
-		write(tty_out, buf, byte_count);
-	    }
-
-	    if(tty_in != -1 && FD_ISSET(tty_in, &reads))
-            {
-		dbprintf("Read from TTY\n");
-
-                unsigned char buf[512];
-		int byte_count = read(tty_in, buf, sizeof(buf));
-
-                if(byte_count > 0)
-                {
-
-                    if(saw_tilde)
-                    {
-                        saw_tilde = false;
-                        done = handle_tilde_command(buf[0], serial, tty_out,
-                                                    duplex, crnl);
-                        continue;
-                    }
-                    else if(buf[0] == '~')
-                    {
-                        saw_tilde = true;
-                        continue;
-                    }
-
-                    dbprintf("writing %d bytes: '%c', %d\n", byte_count, buf[0], buf[0]);
-                    write(serial, buf, byte_count);
-
-                    if(duplex)
-                    {
-                        write(tty_out, buf, byte_count);
-                    }
-
-                }
-                else
-                {
-
-		    fprintf(stderr, "unexpected read of 0 bytes from tty_in!\n");
-		    done = true;
-		    continue;
-
-                }
-	    }
-	}
-    }
+    run_loop(serial, tty_in, tty_out, serial_pathname, baud,
+             watch, expect_disconnect, timestamp);
 
 restore:
 
+    restore_terminal();
     if(tty_in != -1)
-    {
-        if(tcsetattr(tty_in, TCSANOW, &old_stdin_termios) != 0)
-        {
-            perror("restoring stdin");
-            return (0);
-        }
         close(tty_in);
-    }
 
     close(serial);
     close(tty_out);
